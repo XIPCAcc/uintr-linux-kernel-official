@@ -80,6 +80,7 @@ bool uintr_check_uitte_valid(struct uintr_uitt_ctx *uitt_ctx, unsigned int entry
 void uintr_wake_up_process(void);
 bool is_uintr_receiver(struct task_struct *t);
 bool is_uintr_ongoing(struct task_struct *t);
+int uintr_receiver_wait(ktime_t *expires);
 
 /* UINTR kernel notification related functions */
 struct file *uvecfd_fget(int uvec_fd);
@@ -106,6 +107,8 @@ static inline struct file *uvecfd_fget(int uvec_fd) { return ERR_PTR(-EINVAL); }
 static inline void switch_uintr_prepare(struct task_struct *prev) {}
 static inline void switch_uintr_return(void) {}
 static inline void switch_uintr_finish(struct task_struct *next) {}
+
+static inline int uintr_receiver_wait(ktime_t *expires) { return -EINVAL; }
 
 static inline void uintr_free(struct task_struct *task) {}
 

@@ -1233,7 +1233,7 @@ struct file *uvecfd_fget(int fd)
 }
 EXPORT_SYMBOL_GPL(uvecfd_fget);
 
-static int uintr_receiver_wait(ktime_t *expires)
+int uintr_receiver_wait(ktime_t *expires)
 {
 	struct task_struct *tsk = current;
 	struct hrtimer_sleeper t;
@@ -1267,6 +1267,7 @@ static int uintr_receiver_wait(ktime_t *expires)
 
 	return !t.task ? 0 : -EINTR;
 }
+EXPORT_SYMBOL_GPL(uintr_receiver_wait);
 
 /* For now, use a max value of 1000 seconds */
 #define UINTR_WAIT_MAX_USEC	1000000000
