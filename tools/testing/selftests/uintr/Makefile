@@ -15,7 +15,8 @@ TEST_GEN_PROGS = ipc_base \
 	senduipi_self_ipi \
 	syscall_alt_stack \
 	syscall_ipi_fd \
-	syscall_blocking
+	syscall_blocking \
+	syscall_wait_indefinite
 
 TEST_GEN_PROGS_EXTENDED = context_switch_ipc
 

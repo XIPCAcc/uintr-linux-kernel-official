@@ -17,6 +17,7 @@
 #include <linux/syscalls.h>
 #include <linux/task_work.h>
 #include <linux/uaccess.h>
+#include <linux/module.h>
 
 #include <asm/apic.h>
 #include <asm/fpu/api.h>
@@ -47,6 +48,17 @@ static void uintr_remove_task_wait(struct task_struct *task);
 /* TODO: To remove the global lock, move to a per-cpu wait list. */
 static DEFINE_SPINLOCK(uintr_wait_lock);
 static struct list_head uintr_wait_list = LIST_HEAD_INIT(uintr_wait_list);
+
+/*
+ * Debug counters for the indefinite-wait ON-bit recheck path.  Exposed via
+ * module parameters so they can be read without root from /sys/module/.
+ *  - recheck_enqueue: times the post-enqueue ON recheck ran
+ *  - recheck_on_set:  times it found ON=1 (and sent the self-IPI)
+ */
+static int uintr_dbg_recheck_enqueue;
+static int uintr_dbg_recheck_on_set;
+module_param_named(recheck_enqueue, uintr_dbg_recheck_enqueue, int, 0644);
+module_param_named(recheck_on_set, uintr_dbg_recheck_on_set, int, 0644);
 
 inline bool is_uintr_receiver(struct task_struct *t)
 {
@@ -1268,8 +1280,43 @@ static int uintr_receiver_wait(ktime_t *expires)
 	return !t.task ? 0 : -EINTR;
 }
 
+/*
+ * Timerless variant of uintr_receiver_wait() for indefinite waits.
+ *
+ * Without a timeout there is no timer backstop, so the wait-event
+ * condition (the UPID ON bit) must be rechecked after marking the task
+ * interruptible and before blocking. A second recheck is added after
+ * enqueue in uintr_switch_to_kernel_interrupt(). Together they close the
+ * window in which a notification arrives before the task is linked into
+ * uintr_wait_list, which would otherwise leave the task sleeping forever.
+ */
+static int uintr_receiver_wait_indefinite(void)
+{
+	struct task_struct *tsk = current;
+
+	if (!is_uintr_receiver(tsk))
+		return -EOPNOTSUPP;
+
+	pr_debug("uintr: Pause indefinitely for uintr for task %d\n", tsk->pid);
+
+	set_current_state(TASK_INTERRUPTIBLE);
+
+	/* Recheck: a notification already pending must not be slept on */
+	if (!is_uintr_ongoing(tsk))
+		schedule();
+
+	__set_current_state(TASK_RUNNING);
+
+	pr_debug("recv: Returned from indefinite schedule task=%d\n",
+		 current->pid);
+
+	return -EINTR;
+}
+
 /* For now, use a max value of 1000 seconds */
 #define UINTR_WAIT_MAX_USEC	1000000000
+/* Sentinel usec value: wait indefinitely until a UINTR or signal arrives */
+#define UINTR_WAIT_INDEFINITE	(~0ULL)
 
 /*
  * sys_uintr_wait - Wait for a user interrupt for the specified time
@@ -1287,6 +1334,10 @@ SYSCALL_DEFINE2(uintr_wait, u64, usec, unsigned int, flags)
 	if (flags)
 		return -EINVAL;
 
+	/* Indefinite wait: UINTR_WAIT_INDEFINITE (~0ULL) */
+	if (usec == UINTR_WAIT_INDEFINITE)
+		return uintr_receiver_wait_indefinite();
+
 	/* Check: Do we need an option for waiting indefinitely */
 	if (usec > UINTR_WAIT_MAX_USEC)
 		return -EINVAL;
@@ -1301,12 +1352,32 @@ SYSCALL_DEFINE2(uintr_wait, u64, usec, unsigned int, flags)
 static void uintr_switch_to_kernel_interrupt(struct uintr_upid_ctx *upid_ctx)
 {
 	unsigned long flags;
+	bool uintr_pending;
 
 	upid_ctx->upid->nc.nv = UINTR_KERNEL_VECTOR;
 	upid_ctx->waiting = true;
 	spin_lock_irqsave(&uintr_wait_lock, flags);
 	list_add(&upid_ctx->node, &uintr_wait_list);
+	/*
+	 * Recheck the ON bit after enqueue. A notification can arrive while
+	 * nv has been switched (or earlier via 0xec) but before the entry was
+	 * linked above, so the notification handler may have scanned the list
+	 * without finding this task. The sender sets ON before issuing the
+	 * IPI and the handlers scan the list under this same lock, hence a
+	 * missed notification is observable here. IRQs stay off for the rest
+	 * of the context switch, so the self-IPI latches in the APIC IRR and
+	 * fires after the switch, letting the kernel notification handler
+	 * wake this task.
+	 */
+	WRITE_ONCE(uintr_dbg_recheck_enqueue, uintr_dbg_recheck_enqueue + 1);
+	uintr_pending = test_bit(UINTR_UPID_STATUS_ON,
+				 (unsigned long *)&upid_ctx->upid->nc.status);
 	spin_unlock_irqrestore(&uintr_wait_lock, flags);
+
+	if (unlikely(uintr_pending)) {
+		WRITE_ONCE(uintr_dbg_recheck_on_set, uintr_dbg_recheck_on_set + 1);
+		apic->send_IPI_self(UINTR_KERNEL_VECTOR);
+	}
 }
 
 static void uintr_set_blocked_upid_bit(struct uintr_upid_ctx *upid_ctx)
