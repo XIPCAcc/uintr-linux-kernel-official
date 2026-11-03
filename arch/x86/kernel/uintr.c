@@ -1205,6 +1205,42 @@ int uintr_notify(struct file *uvec_f)
 EXPORT_SYMBOL_GPL(uintr_notify);
 
 /**
+ * uintr_kern_notify - Send a user interrupt to a task from the kernel.
+ * @task: target task
+ *
+ * Posts to the lowest registered vector of the receiver's UPID. Used by
+ * the tty signal path (e.g. Ctrl-C) to additionally notify UINTR-aware
+ * tasks without going through a uvec_fd.
+ *
+ * Returns 0 on success, -EINVAL if the task is not a UINTR receiver.
+ * Safe to call from atomic context.
+ */
+int uintr_kern_notify(struct task_struct *task)
+{
+	struct uintr_upid_ctx *upid_ctx;
+	int bit;
+
+	if (!is_uintr_receiver(task))
+		return -EINVAL;
+
+	upid_ctx = task->thread.upid_ctx;
+	if (!upid_ctx || !upid_ctx->receiver_active)
+		return -EINVAL;
+
+	/* Pick the lowest registered vector */
+	bit = find_first_bit((unsigned long *)&upid_ctx->uvec_mask,
+			     UINTR_MAX_UVEC_NR);
+	if (bit >= UINTR_MAX_UVEC_NR)
+		return -EINVAL;
+
+	pr_debug("notify: kernel notifying task %d uvec %d\n",
+		 task->pid, bit);
+
+	return uintr_notify_receiver(bit, upid_ctx);
+}
+EXPORT_SYMBOL_GPL(uintr_kern_notify);
+
+/**
  * uvecfd_fget - Acquire a reference of an uvecfd file descriptor.
  * @fd: [in] uvecfd file descriptor.
  *

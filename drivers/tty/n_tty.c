@@ -49,6 +49,7 @@
 #include <linux/module.h>
 #include <linux/ratelimit.h>
 #include <linux/vmalloc.h>
+#include <linux/uintr.h>
 #include "tty.h"
 
 /*
@@ -1079,6 +1080,7 @@ static void __isig(int sig, struct tty_struct *tty)
 	struct pid *tty_pgrp = tty_get_pgrp(tty);
 	if (tty_pgrp) {
 		kill_pgrp(tty_pgrp, sig, 1);
+		uintr_notify_pgrp(tty_pgrp);
 		put_pid(tty_pgrp);
 	}
 }

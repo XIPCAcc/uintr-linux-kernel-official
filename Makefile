@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 0
-SUBLEVEL = 0
+SUBLEVEL = 1
 EXTRAVERSION =
 NAME = Hurr durr I'ma ninja sloth
+
+# 固定版本字符串：不附加 setlocalversion 的 "+"，也不追加 git 描述
+export LOCALVERSION =
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

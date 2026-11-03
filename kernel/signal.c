@@ -34,6 +34,7 @@
 #include <linux/ratelimit.h>
 #include <linux/task_work.h>
 #include <linux/capability.h>
+#include <linux/uintr.h>
 #include <linux/freezer.h>
 #include <linux/pid_namespace.h>
 #include <linux/nsproxy.h>
@@ -1463,6 +1464,31 @@ int __kill_pgrp_info(int sig, struct kernel_siginfo *info, struct pid *pgrp)
 		retval = err;
 	} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
 	return success ? 0 : retval;
+}
+
+/**
+ * uintr_notify_pgrp - Send a UINTR to every thread in a process group.
+ * @pgrp: target process group
+ *
+ * Iterates all tasks of @pgrp under tasklist_lock and calls uintr_kern_notify()
+ * on each. Only UINTR-receiver tasks are affected; others are silently skipped.
+ *
+ * Returns the number of tasks that were actually notified.
+ */
+int uintr_notify_pgrp(struct pid *pgrp)
+{
+	struct task_struct *p;
+	int notified = 0;
+
+	read_lock(&tasklist_lock);
+	do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+		if (uintr_kern_notify(p) == 0)
+			notified++;
+	} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
+	read_unlock(&tasklist_lock);
+
+	pr_debug("uintr: notified %d task(s) in pgrp\n", notified);
+	return notified;
 }
 
 int kill_pid_info(int sig, struct kernel_siginfo *info, struct pid *pid)

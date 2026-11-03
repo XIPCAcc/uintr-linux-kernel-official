@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-only
+ipc_base
+syscall_handler
+syscall_vector
+syscall_sender
+syscall_flags
+senduipi_instr
+senduipi_self_ipi
+syscall_alt_stack
+syscall_ipi_fd
+syscall_blocking
+tty_isig
+context_switch_ipc
